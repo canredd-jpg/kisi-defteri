@@ -1,6 +1,6 @@
 // Önce ağdan dener, olmazsa önbellekten açar: güncellemeler hemen gelir, internet yokken de açılır.
 // Ayrıca yaklaşan tarihler için bildirim gösterir (bir gün önce ve o gün).
-const CACHE = 'kisi-defteri-v2';
+const CACHE = 'kisi-defteri-v3';
 const DATA = 'kd-data';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 const REM_URL = new URL('__kd/reminders', self.registration.scope).toString();

@@ -8,6 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script>try{var s=localStorage.getItem('kd-skin');if(s)document.documentElement.setAttribute('data-skin',s);}catch(e){}</script>
 <style>:root{padding-top:env(safe-area-inset-top,0px)}body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
 <title>Kişi Defteri</title>
 <meta name="apple-mobile-web-app-title" content="Kişi Defteri">
@@ -43,6 +44,17 @@
   --shadow:0 6px 20px rgba(0,0,0,.45);
   color-scheme:dark;
 }
+/* Temalar: Diğer sekmesinden seçilir; "Otomatik" telefonun açık/koyu ayarını izler. */
+:root[data-skin]{--c-ozel:#c2581c; --c-saglik:#c0334d; --c-aile:#6a4fc2; --c-hobi:#2f8a4c; --c-is:#2b6aa6; --c-diger:#6b7772; --shadow:0 6px 20px rgba(21,32,28,.12); color-scheme:light}
+:root[data-skin="orman"]{--bg:#eef2f0; --surface:#ffffff; --ink:#15201c; --muted:#5b6964; --line:#d9e1dd; --accent:#1d6b58; --accent-ink:#ffffff; --accent-soft:#dcefe7}
+:root[data-skin="okyanus"]{--bg:#edf3f8; --surface:#ffffff; --ink:#122033; --muted:#56657a; --line:#d6e1ec; --accent:#1f5fa8; --accent-ink:#ffffff; --accent-soft:#dce8f6}
+:root[data-skin="lavanta"]{--bg:#f3f0f8; --surface:#ffffff; --ink:#211a30; --muted:#655d78; --line:#e2dcec; --accent:#6a4cc2; --accent-ink:#ffffff; --accent-soft:#e8e1f8}
+:root[data-skin="gunbatimi"]{--bg:#f8f1ec; --surface:#ffffff; --ink:#2a1a12; --muted:#7a6458; --line:#eadbd1; --accent:#c4521d; --accent-ink:#ffffff; --accent-soft:#f8e2d5}
+:root[data-skin="gul"]{--bg:#f8eff2; --surface:#ffffff; --ink:#2b1520; --muted:#7a5d69; --line:#ecd8df; --accent:#b83266; --accent-ink:#ffffff; --accent-soft:#f6dde7}
+:root[data-skin="gece"], :root[data-skin="gecemavisi"], :root[data-skin="komur"]{--c-ozel:#f0915a; --c-saglik:#f07a8e; --c-aile:#a996f2; --c-hobi:#6fd08f; --c-is:#74aee6; --c-diger:#9aa7a2; --shadow:0 6px 20px rgba(0,0,0,.45); color-scheme:dark}
+:root[data-skin="gece"]{--bg:#0e1412; --surface:#17201d; --ink:#e4ebe8; --muted:#93a29d; --line:#2a3531; --accent:#5cc4a6; --accent-ink:#0b1714; --accent-soft:#1c3a32}
+:root[data-skin="gecemavisi"]{--bg:#0d1220; --surface:#161d30; --ink:#e3e8f4; --muted:#93a0bb; --line:#28314a; --accent:#7aa7ff; --accent-ink:#0b1222; --accent-soft:#1e2b4d}
+:root[data-skin="komur"]{--bg:#121212; --surface:#1c1c1c; --ink:#ececec; --muted:#a0a0a0; --line:#2e2e2e; --accent:#f2b544; --accent-ink:#1a1405; --accent-soft:#3a2f15}
 *{box-sizing:border-box}
 html,body{min-height:100%}
 body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--f-body);-webkit-tap-highlight-color:transparent}
@@ -144,6 +156,11 @@ dialog::backdrop{background:rgba(10,16,14,.45)}
 .status.ok i{background:var(--c-hobi)}
 .status.warn i{background:var(--c-ozel)}
 .help{padding:16px;display:flex;flex-direction:column;gap:8px;font-size:15px}
+.skins{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px}
+.skin{border:2px solid var(--line);background:var(--surface);border-radius:14px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--ink)}
+.skin.on{border-color:var(--accent)}
+.skin .sw{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center}
+.skin .sw i{width:16px;height:16px;border-radius:50%}
 .help ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
 @media (prefers-reduced-motion:no-preference){
   .sheet{animation:up .22s ease-out}
@@ -498,6 +515,13 @@ function renderSettings(){
     : `<div class="status"><i></i>Bağlanıyor…</div>`;
   $('#view').innerHTML = `
     <div class="card help">${st}<div class="sub">${store.people.length} kişi · ${total} bilgi</div></div>
+    <div class="section"><h2>Tema</h2>
+      <div class="card help"><div class="skins">${SKINS.map(s => `
+        <button class="skin ${currentSkin()===s.id?'on':''}" data-skin="${s.id}" aria-pressed="${currentSkin()===s.id}">
+          <span class="sw" style="background:${s.id==='auto' ? 'linear-gradient(135deg,#eef2f0 50%,#0e1412 50%)' : s.bg}"><i style="background:${s.accent}"></i></span>
+          <span>${s.name}</span>
+        </button>`).join('')}</div></div>
+    </div>
     <div class="section"><h2>Bildirimler</h2>
       <div class="card help">${notifyBlock()}</div>
     </div>
@@ -522,7 +546,34 @@ function renderSettings(){
   $('#importBtn').onclick = () => $('#importFile').click();
   const nb = $('#notifyBtn'); if (nb) nb.onclick = enableNotify;
   const tb = $('#testNotifyBtn'); if (tb) tb.onclick = testNotify;
+  document.querySelectorAll('.skin').forEach(b => b.onclick = () => { setSkin(b.dataset.skin); renderSettings(); });
 }
+
+/* ---------------- temalar ---------------- */
+const SKINS = [
+  { id:'auto',       name:'Otomatik',    bg:'', accent:'#1d6b58' },
+  { id:'orman',      name:'Orman',       bg:'#eef2f0', accent:'#1d6b58' },
+  { id:'okyanus',    name:'Okyanus',     bg:'#edf3f8', accent:'#1f5fa8' },
+  { id:'lavanta',    name:'Lavanta',     bg:'#f3f0f8', accent:'#6a4cc2' },
+  { id:'gunbatimi',  name:'Gün batımı',  bg:'#f8f1ec', accent:'#c4521d' },
+  { id:'gul',        name:'Gül',         bg:'#f8eff2', accent:'#b83266' },
+  { id:'gece',       name:'Gece',        bg:'#0e1412', accent:'#5cc4a6' },
+  { id:'gecemavisi', name:'Gece mavisi', bg:'#0d1220', accent:'#7aa7ff' },
+  { id:'komur',      name:'Kömür',       bg:'#121212', accent:'#f2b544' }
+];
+function currentSkin(){ return document.documentElement.getAttribute('data-skin') || 'auto'; }
+function setSkin(id){
+  if (id === 'auto') document.documentElement.removeAttribute('data-skin');
+  else document.documentElement.setAttribute('data-skin', id);
+  try { if (id === 'auto') localStorage.removeItem('kd-skin'); else localStorage.setItem('kd-skin', id); } catch(e){}
+  syncThemeColor();
+}
+function syncThemeColor(){
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#1d6b58');
+}
+syncThemeColor();
+try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeColor); } catch(e){}
 
 /* ---------------- bildirimler ve takvim ---------------- */
 const REM_URL = new URL('__kd/reminders', location.href).toString();
