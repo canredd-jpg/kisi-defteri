@@ -281,7 +281,7 @@ const store = {
     } else {
       this.mode = 'local';
       try { const d = JSON.parse(localStorage.getItem(LOCAL_KEY)); if (d && Array.isArray(d.people)) this.people = d.people; } catch(e){}
-      ui.loaded = true; render();
+      ui.loaded = true; render(); syncReminders();
     }
   },
   goLocal(){
@@ -295,7 +295,7 @@ const store = {
     this.mode = 'local'; ui.offline = false; this.saveLocal(); render();
     toast('Kayıtların bu cihazda tutuluyor');
   },
-  saveLocal(){ try { localStorage.setItem(LOCAL_KEY, JSON.stringify({people:this.people})); } catch(e){ toast('Bu cihazda kaydedilemedi'); } },
+  saveLocal(){ try { localStorage.setItem(LOCAL_KEY, JSON.stringify({people:this.people})); } catch(e){ toast('Bu cihazda kaydedilemedi'); } syncReminders(); },
   async save(p){
     const i = this.people.findIndex(x => x.id === p.id);
     if (i >= 0) this.people[i] = p; else this.people.push(p);
@@ -448,7 +448,7 @@ function renderPerson(){
   const counts = {}; entries.forEach(e => counts[e.cat] = (counts[e.cat]||0) + 1);
   const shown = entries.filter(e => !ui.cat || e.cat === ui.cat);
   let bd = '';
-  if (p.birthday){ const n = next(p.birthday, true); bd = `<span class="fact">${fmtLong(p.birthday)} · ${age(p.birthday)} yaşında</span><span class="fact">Doğum günü: ${daysText(days(n)).toLocaleLowerCase('tr')}</span>`; }
+  if (p.birthday){ const n = next(p.birthday, true); bd = `<span class="fact">${fmtLong(p.birthday)} · ${age(p.birthday)} yaşında</span><span class="fact">Doğum günü: ${daysText(days(n)).toLocaleLowerCase('tr')}</span>${calLink(`${p.name} doğum günü`, p.birthday, true)}`; }
   v.innerHTML = `
     <div class="card profile">
       <div class="sub">${esc(p.relation || 'Yakınlık eklenmedi')}</div>
@@ -464,7 +464,7 @@ function renderPerson(){
       <div class="card">
         ${shown.length ? shown.map(e => {
           let dt = '';
-          if (e.date){ const n = next(e.date, e.yearly); dt = `<span>${fmtLong(e.date)}${e.yearly?' · her yıl':''} · ${daysText(days(n))}</span>`; }
+          if (e.date){ const n = next(e.date, e.yearly); dt = `<span>${fmtLong(e.date)}${e.yearly?' · her yıl':''} · ${daysText(days(n))}</span>${days(n) >= 0 ? calLink(`${p.name}: ${e.text}`, e.date, e.yearly) : ''}`; }
           return `<div class="entry">
             <div class="text">${esc(e.text)}</div>
             <div class="foot">${catLabel(e.cat)}${dt}${e.followup?'<span class="pill">Sonra sor</span>':''}
@@ -498,6 +498,9 @@ function renderSettings(){
     : `<div class="status"><i></i>Bağlanıyor…</div>`;
   $('#view').innerHTML = `
     <div class="card help">${st}<div class="sub">${store.people.length} kişi · ${total} bilgi</div></div>
+    <div class="section"><h2>Bildirimler</h2>
+      <div class="card help">${notifyBlock()}</div>
+    </div>
     <div class="section"><h2>Yedek</h2>
       <div class="card help">
         <div>Tüm kayıtlarını bir dosya olarak indir; gerekirse geri yükle.</div>
@@ -517,6 +520,69 @@ function renderSettings(){
     </div>`;
   $('#exportBtn').onclick = exportData;
   $('#importBtn').onclick = () => $('#importFile').click();
+  const nb = $('#notifyBtn'); if (nb) nb.onclick = enableNotify;
+  const tb = $('#testNotifyBtn'); if (tb) tb.onclick = testNotify;
+}
+
+/* ---------------- bildirimler ve takvim ---------------- */
+const REM_URL = new URL('__kd/reminders', location.href).toString();
+const notifySupported = () => 'Notification' in window && 'serviceWorker' in navigator;
+function notifyBlock(){
+  const note = `<div class="sub">Doğum günleri ve tarihli bilgiler için bir gün önce ve o gün bildirim gelir. Telefon, uygulama kapalıyken bildirimi geciktirebilir; kesin hatırlatma için kişinin sayfasındaki tarihlerde “Takvime ekle”yi kullan.</div>`;
+  if (!notifySupported()) return `<div class="status warn"><i></i>Bu tarayıcı bildirim desteklemiyor. Tarihleri “Takvime ekle” ile telefonunun takvimine ekleyebilirsin.</div>`;
+  const p = Notification.permission;
+  if (p === 'granted') return `<div class="status ok"><i></i>Bildirimler açık.</div>${note}<div><button class="btn" id="testNotifyBtn">Deneme bildirimi gönder</button></div>`;
+  if (p === 'denied') return `<div class="status warn"><i></i>Bildirimler engellenmiş. Chrome'da adres çubuğundaki kilit simgesine dokun, “İzinler”den bildirimlere izin ver.</div>${note}`;
+  return `${note}<div><button class="btn primary" id="notifyBtn">Bildirimleri aç</button></div>`;
+}
+async function enableNotify(){
+  let p = 'denied';
+  try { p = await Notification.requestPermission(); } catch(e){}
+  if (p !== 'granted'){ toast('Bildirim izni verilmedi'); render(); return; }
+  try { await navigator.storage?.persist?.(); } catch(e){}
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.periodicSync?.register('kd-reminders', { minInterval: 12 * 60 * 60 * 1000 });
+  } catch(e){}
+  await syncReminders();
+  toast('Bildirimler açıldı'); render();
+}
+async function testNotify(){
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification('Kişi Defteri', { body:'Bildirimler çalışıyor.', icon:'icon-192.png', tag:'kd-test' });
+  } catch(e){ toast('Bildirim gösterilemedi'); }
+}
+let remTimer;
+function syncReminders(){
+  clearTimeout(remTimer);
+  remTimer = setTimeout(async () => {
+    if (!('caches' in window)) return;
+    const items = [];
+    for (const p of store.people){
+      if (p.birthday) items.push({ key:p.id + ':bd', name:p.name, text:'Doğum günü', date:p.birthday, yearly:true, birthday:true });
+      for (const e of p.entries || []) if (e.date) items.push({ key:p.id + ':' + e.id, name:p.name, text:e.text, date:e.date, yearly:!!e.yearly });
+    }
+    try {
+      const c = await caches.open('kd-data');
+      await c.put(REM_URL, new Response(JSON.stringify(items), { headers:{ 'content-type':'application/json' } }));
+    } catch(e){ return; }
+    if (notifySupported() && Notification.permission === 'granted'){
+      try { const reg = await navigator.serviceWorker.ready; reg.active && reg.active.postMessage('check'); } catch(e){}
+    }
+  }, 400);
+}
+function calLink(title, dateStr, yearly){
+  const d = parse(dateStr); if (!d) return '';
+  const e = new Date(d); e.setDate(e.getDate() + 1);
+  const f = x => `${x.getFullYear()}${String(x.getMonth()+1).padStart(2,'0')}${String(x.getDate()).padStart(2,'0')}`;
+  const u = new URL('https://calendar.google.com/calendar/render');
+  u.searchParams.set('action', 'TEMPLATE');
+  u.searchParams.set('text', title);
+  u.searchParams.set('dates', `${f(d)}/${f(e)}`);
+  u.searchParams.set('details', 'Kişi Defteri hatırlatması');
+  if (yearly) u.searchParams.set('recur', 'RRULE:FREQ=YEARLY');
+  return `<a class="linkbtn" href="${esc(u.toString())}" target="_blank" rel="noopener">Takvime ekle</a>`;
 }
 
 /* ---------------- actions ---------------- */
