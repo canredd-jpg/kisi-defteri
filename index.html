@@ -529,12 +529,12 @@ function renderSettings(){
       <div class="card help">
         <div>Tüm kayıtlarını bir dosya olarak indir; gerekirse geri yükle.</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn primary" id="exportBtn">Yedeği indir</button>
+          <button class="btn primary" id="exportBtn">${NATIVE ? 'Yedeği kaydet / paylaş' : 'Yedeği indir'}</button>
           <button class="btn" id="importBtn">Yedekten geri yükle</button>
         </div>
       </div>
     </div>
-    <div class="section"><h2>Ana ekrana ekle</h2>
+    <div class="section" ${NATIVE ? 'hidden' : ''}><h2>Ana ekrana ekle</h2>
       <div class="card help">
         <div><strong>iPhone (Safari):</strong></div>
         <ol><li>Bu sayfayı Safari'de aç.</li><li>Alttaki Paylaş düğmesine dokun.</li><li>“Ana Ekrana Ekle”yi seç.</li></ol>
@@ -578,7 +578,38 @@ try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', sync
 /* ---------------- bildirimler ve takvim ---------------- */
 const REM_URL = new URL('__kd/reminders', location.href).toString();
 const notifySupported = () => 'Notification' in window && 'serviceWorker' in navigator;
+/* Android uygulaması (APK) içinde çalışırken telefonun kendi bildirim ve paylaşma özelliklerini kullan. */
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const plug = n => window.Capacitor?.Plugins?.[n];
+let nativePerm = 'prompt';
+async function refreshNativePerm(){ try { nativePerm = (await plug('LocalNotifications').checkPermissions()).display; } catch(e){ nativePerm = 'denied'; } }
+async function scheduleNative(items){
+  const ln = plug('LocalNotifications'); if (!ln) return;
+  try { const p = await ln.getPending(); if (p.notifications.length) await ln.cancel({ notifications: p.notifications.map(n => ({ id:n.id })) }); } catch(e){}
+  const out = []; let id = 1; const now = Date.now();
+  for (const it of items){
+    const base = parse(it.date); if (!base) continue;
+    const body = it.birthday ? 'Doğum günü' : it.text;
+    for (const before of [1, 0]){
+      const title = `${before ? 'Yarın' : 'Bugün'}: ${it.name}`;
+      if (it.yearly){
+        const d = new Date(2001, base.getMonth(), base.getDate() - before);
+        out.push({ id:id++, title, body, schedule:{ on:{ month:d.getMonth() + 1, day:d.getDate(), hour:9, minute:0 }, allowWhileIdle:true } });
+      } else {
+        const at = new Date(base.getFullYear(), base.getMonth(), base.getDate() - before, 9, 0);
+        if (at.getTime() > now) out.push({ id:id++, title, body, schedule:{ at, allowWhileIdle:true } });
+      }
+    }
+  }
+  if (out.length) { try { await ln.schedule({ notifications: out.slice(0, 400) }); } catch(e){} }
+}
 function notifyBlock(){
+  if (NATIVE){
+    const nn = `<div class="sub">Doğum günleri ve tarihli bilgiler için bir gün önce ve o gün, sabah 09:00'da bildirim gelir. Uygulama kapalıyken de çalışır.</div>`;
+    if (nativePerm === 'granted') return `<div class="status ok"><i></i>Bildirimler açık.</div>${nn}<div><button class="btn" id="testNotifyBtn">Deneme bildirimi gönder</button></div>`;
+    if (nativePerm === 'denied') return `<div class="status warn"><i></i>Bildirimler kapalı. Telefonun Ayarlar → Uygulamalar → Kişi Defteri → Bildirimler bölümünden izin ver.</div>${nn}`;
+    return `${nn}<div><button class="btn primary" id="notifyBtn">Bildirimleri aç</button></div>`;
+  }
   const note = `<div class="sub">Doğum günleri ve tarihli bilgiler için bir gün önce ve o gün bildirim gelir. Telefon, uygulama kapalıyken bildirimi geciktirebilir; kesin hatırlatma için kişinin sayfasındaki tarihlerde “Takvime ekle”yi kullan.</div>`;
   if (!notifySupported()) return `<div class="status warn"><i></i>Bu tarayıcı bildirim desteklemiyor. Tarihleri “Takvime ekle” ile telefonunun takvimine ekleyebilirsin.</div>`;
   const p = Notification.permission;
@@ -587,6 +618,11 @@ function notifyBlock(){
   return `${note}<div><button class="btn primary" id="notifyBtn">Bildirimleri aç</button></div>`;
 }
 async function enableNotify(){
+  if (NATIVE){
+    try { nativePerm = (await plug('LocalNotifications').requestPermissions()).display; } catch(e){ nativePerm = 'denied'; }
+    if (nativePerm === 'granted'){ syncReminders(); toast('Bildirimler açıldı'); } else toast('Bildirim izni verilmedi');
+    render(); return;
+  }
   let p = 'denied';
   try { p = await Notification.requestPermission(); } catch(e){}
   if (p !== 'granted'){ toast('Bildirim izni verilmedi'); render(); return; }
@@ -599,6 +635,11 @@ async function enableNotify(){
   toast('Bildirimler açıldı'); render();
 }
 async function testNotify(){
+  if (NATIVE){
+    try { await plug('LocalNotifications').schedule({ notifications:[{ id:999999, title:'Kişi Defteri', body:'Bildirimler çalışıyor.', schedule:{ at:new Date(Date.now() + 2000) } }] }); toast('2 saniye içinde bildirim gelecek'); }
+    catch(e){ toast('Bildirim gösterilemedi'); }
+    return;
+  }
   try {
     const reg = await navigator.serviceWorker.ready;
     await reg.showNotification('Kişi Defteri', { body:'Bildirimler çalışıyor.', icon:'icon-192.png', tag:'kd-test' });
@@ -608,12 +649,13 @@ let remTimer;
 function syncReminders(){
   clearTimeout(remTimer);
   remTimer = setTimeout(async () => {
-    if (!('caches' in window)) return;
     const items = [];
     for (const p of store.people){
       if (p.birthday) items.push({ key:p.id + ':bd', name:p.name, text:'Doğum günü', date:p.birthday, yearly:true, birthday:true });
       for (const e of p.entries || []) if (e.date) items.push({ key:p.id + ':' + e.id, name:p.name, text:e.text, date:e.date, yearly:!!e.yearly });
     }
+    if (NATIVE){ if (nativePerm === 'granted') await scheduleNative(items); return; }
+    if (!('caches' in window)) return;
     try {
       const c = await caches.open('kd-data');
       await c.put(REM_URL, new Response(JSON.stringify(items), { headers:{ 'content-type':'application/json' } }));
@@ -730,6 +772,13 @@ function ask(title, text){
 async function exportData(){
   const json = JSON.stringify({ app:'kisi-defteri', exported:new Date().toISOString(), people:store.people }, null, 2);
   const name = `kisi-defteri-yedek-${new Date().toISOString().slice(0,10)}.json`;
+  if (NATIVE){
+    try {
+      const r = await plug('Filesystem').writeFile({ path:name, data:json, directory:'CACHE', encoding:'utf8' });
+      await plug('Share').share({ title:'Kişi Defteri yedeği', url:r.uri, dialogTitle:'Yedeği nereye kaydedeyim?' });
+    } catch(e){ if (!/cancel/i.test(e?.message || '')) toast('Yedek paylaşılamadı'); }
+    return;
+  }
   let dl = null; try { dl = await window.claude?.use?.('downloads'); } catch(e){}
   if (dl){
     try { await dl.save({ filename:name, data:json }); toast('Yedek kaydedildi'); }
@@ -748,9 +797,19 @@ $('#importFile').onchange = async ev => {
   toast('Yedek yüklendi');
 };
 
+if (NATIVE){
+  // Uygulamada dış bağlantılar (Takvime ekle) telefonun takvim/tarayıcı uygulamasında açılsın.
+  document.addEventListener('click', ev => {
+    const a = ev.target.closest('a[target="_blank"]'); if (!a) return;
+    ev.preventDefault();
+    const al = plug('AppLauncher');
+    (al ? al.openUrl({ url:a.href }) : Promise.reject()).catch(() => { location.href = a.href; });
+  });
+  refreshNativePerm().then(syncReminders);
+}
 render();
 store.init();
 </script>
-<script>if("serviceWorker" in navigator){addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));}</script>
+<script>if("serviceWorker" in navigator && !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())){addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));}</script>
 </body>
 </html>

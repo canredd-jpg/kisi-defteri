@@ -1,0 +1,9 @@
+{
+  "appId": "com.canredd.kisidefteri",
+  "appName": "Kişi Defteri",
+  "webDir": "www",
+  "android": { "backgroundColor": "#eef2f0" },
+  "plugins": {
+    "LocalNotifications": { "smallIcon": "ic_stat_kd", "iconColor": "#1d6b58" }
+  }
+}

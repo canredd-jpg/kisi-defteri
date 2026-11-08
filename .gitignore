@@ -1,1 +1,4 @@
 .claude/
+android-app/node_modules/
+android-app/www/
+android-app/android/
